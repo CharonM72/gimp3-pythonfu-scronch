@@ -5,7 +5,7 @@ A fairly simple GIMP 3.0 Python-fu script that will export the full, flattened, 
 Intended to be set to a keyboard shortcut for quick and easy exporting.
 
 
-ONLY WORKS IN GIMP 3.0 - I do have one for 2.x as well but not on GitHub.
+ONLY WORKS IN GIMP 3.0 - For a Gimp 2.x-compatible version, see https://github.com/CharonM72/gimp2-pythonfu-scronch
 
 
 To use, place the scronch.py file (or clone the repo) into:
