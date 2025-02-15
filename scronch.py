@@ -53,7 +53,7 @@ class ScronchPlugin(Gimp.PlugIn):
             "Duplicate, flatten, and export image as PNG with timestamp",
             name
         )
-        procedure.set_attribution("Charon", "Copyleft", "2024")
+        procedure.set_attribution("Charon", "GPL 3", "2025")
 
         return procedure
 
