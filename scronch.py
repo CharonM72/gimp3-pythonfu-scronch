@@ -4,14 +4,6 @@
 #   it under the terms of the GNU General Public License as published by
 #   the Free Software Foundation; either version 3 of the License, or
 #   (at your option) any later version.
-#
-#   This program is distributed in the hope that it will be useful,
-#   but WITHOUT ANY WARRANTY; without even the implied warranty of
-#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#   GNU General Public License for more details.
-#
-#   You should have received a copy of the GNU General Public License
-#   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import sys
 import gi
@@ -22,6 +14,32 @@ from gi.repository import Gio
 import os
 import datetime
 import logging
+
+# ============================================================================
+# EXPORT SETTINGS - Modify these values to customize export behavior
+# ============================================================================
+
+# AVIF Export Settings
+AVIF_QUALITY = 85                   # Quality factor (0 = worst, 100 = best) (0 <= quality <= 100, default 50)
+AVIF_LOSSLESS = True                # Use lossless compression (TRUE or FALSE, default FALSE)
+AVIF_BIT_DEPTH = 10                 # 8, 10, or 12 bits per channel
+AVIF_PIXEL_FORMAT = "yuv444"        # "rgb", "yuv444" (best quality), "yuv420" (smaller)
+AVIF_ENCODER_SPEED = "balanced"     # "slow" (best compression), "balanced", "fast"
+AVIF_INCLUDE_EXIF = True            # Include EXIF metadata
+AVIF_INCLUDE_XMP = True             # Include XMP metadata
+
+# PNG Export Settings (fallback)
+PNG_COMPRESSION = 9                 # Deflate Compression factor (0..9) (0 <= compression <= 9, default 9)
+PNG_INTERLACED = False              # Use Adam7 interlacing (TRUE or FALSE, default FALSE)
+PNG_SAVE_TRANSPARENT = True         # Preserve color of completely transparent pixels (TRUE or FALSE, default FALSE)
+PNG_OPTIMIZE_PALETTE = False        # When checked, save as 1, 2, 4, or 8-bit depending on number of colors used. When unchecked, always save as 8-bit (TRUE or FALSE, default FALSE)
+PNG_FORMAT = "auto"                 # Allowed values: auto: Automatic, rgb8: 8 bpc RGB, gray8: 8 bpc GRAY, rgba8: 8 bpc RGBA, graya8: 8 bpc GRAYA, rgb16: 16 bpc RGB,gray16: 16 bpc GRAY, rgba16: 16 bpc RGBA, graya16: 16 bpc GRAYA
+
+# General Settings
+PREFER_AVIF = True                  # Set to False to always use PNG instead
+TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"   # Timestamp format for filename
+
+# ============================================================================
 
 # Configure logging
 logging.basicConfig(
@@ -50,7 +68,7 @@ class ScronchPlugin(Gimp.PlugIn):
         procedure.add_menu_path('<Image>/Filters/')
         procedure.set_documentation(
             "Scronch plugin",
-            "Duplicate, flatten, and export image as PNG with timestamp",
+            "Duplicate, flatten, and export image as AVIF or PNG with timestamp. Settings in the .py plugin file.",
             name
         )
         procedure.set_attribution("Charon", "GPL 3", "2025")
@@ -81,43 +99,85 @@ class ScronchPlugin(Gimp.PlugIn):
                 base_dir = os.getcwd()
                 base_filename = "untitled"
 
-            # Generate the output file path
-            now = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-            png_filename = os.path.join(base_dir, f"{base_filename}-{now}.png")
-            logger.debug(f"Output will be saved to: {png_filename}")
+            # Generate the output file path (changed to .avif)
+            now = datetime.datetime.now().strftime(TIMESTAMP_FORMAT)
+            if PREFER_AVIF:
+                output_filename = os.path.join(base_dir, f"{base_filename}-{now}.avif")
+            else:
+                output_filename = os.path.join(base_dir, f"{base_filename}-{now}.png")
+            logger.debug(f"Output will be saved to: {output_filename}")
 
             # Absolute file path for saving
-            if not os.path.isabs(png_filename):
-                png_filename = os.path.abspath(png_filename)
+            if not os.path.isabs(output_filename):
+                output_filename = os.path.abspath(output_filename)
 
             # Get the PDB instance and export procedure
             pdb = Gimp.get_pdb()
-            export_proc = pdb.lookup_procedure("file-png-export")
+            
+            # Try AVIF first if preferred, otherwise use PNG
+            if PREFER_AVIF:
+                export_proc = pdb.lookup_procedure("file-heif-av1-export")
+                if not export_proc:
+                    logger.warning("AVIF export not available, falling back to PNG")
+                    export_proc = pdb.lookup_procedure("file-png-export")
+                    output_filename = output_filename.replace('.avif', '.png')
+            else:
+                export_proc = pdb.lookup_procedure("file-png-export")
+            
             if not export_proc:
-                raise RuntimeError("Procedure 'file-png-export' not found.")
+                raise RuntimeError("No suitable export procedure found.")
 
             # Create a ProcedureConfig object
             config = export_proc.create_config()
             logger.debug("Config object created.")
 
             # Convert filename to GFile
-            gfile = Gio.File.new_for_path(png_filename)
+            gfile = Gio.File.new_for_path(output_filename)
             logger.debug("Filename converted.")
 
-            # Set the required parameters
-            config.set_property("run-mode", Gimp.RunMode.NONINTERACTIVE)
-            config.set_property("image", dup_img)
-            config.set_property("file", gfile)  # Pass the GFile object
-            config.set_property("options", None)  # Structured options
-            config.set_property("interlaced", False)
-            config.set_property("compression", 9)
-            config.set_property("bkgd", True)
-            config.set_property("offs", False)
-            config.set_property("phys", True)
-            config.set_property("time", True)
-            config.set_property("save-transparent", True)
-            config.set_property("optimize-palette", False)
-            config.set_property("format", "auto")
+            # Set AVIF-specific parameters (if using AVIF export)
+            if "heif-av1" in export_proc.get_name():
+                logger.info("Setting AVIF parameters...")
+                
+                # Set the required base parameters first
+                config.set_property("run-mode", Gimp.RunMode.NONINTERACTIVE)
+                config.set_property("image", dup_img)
+                config.set_property("file", gfile)
+                
+                # Set AVIF-specific parameters using variables
+                config.set_property("options", None)
+                config.set_property("quality", AVIF_QUALITY)
+                config.set_property("lossless", AVIF_LOSSLESS)
+                config.set_property("save-bit-depth", AVIF_BIT_DEPTH)
+                config.set_property("pixel-format", AVIF_PIXEL_FORMAT)
+                config.set_property("encoder-speed", AVIF_ENCODER_SPEED)
+                config.set_property("include-exif", AVIF_INCLUDE_EXIF)
+                config.set_property("include-xmp", AVIF_INCLUDE_XMP)
+                
+                logger.info(f"AVIF parameters: quality={AVIF_QUALITY}, lossless={AVIF_LOSSLESS}, "
+                           f"bit-depth={AVIF_BIT_DEPTH}, pixel-format={AVIF_PIXEL_FORMAT}, "
+                           f"speed={AVIF_ENCODER_SPEED}")
+                        
+            else:
+                # PNG fallback parameters using variables
+                logger.info("Using PNG export parameters...")
+                config.set_property("run-mode", Gimp.RunMode.NONINTERACTIVE)
+                config.set_property("image", dup_img)
+                config.set_property("file", gfile)
+                config.set_property("options", None)
+                config.set_property("interlaced", PNG_INTERLACED)
+                config.set_property("compression", PNG_COMPRESSION)
+                config.set_property("bkgd", True)
+                config.set_property("offs", False)
+                config.set_property("phys", True)
+                config.set_property("time", True)
+                config.set_property("save-transparent", PNG_SAVE_TRANSPARENT)
+                config.set_property("optimize-palette", PNG_OPTIMIZE_PALETTE)
+                config.set_property("format", PNG_FORMAT)
+                
+                logger.info(f"PNG parameters: compression={PNG_COMPRESSION}, "
+                           f"transparent={PNG_SAVE_TRANSPARENT}, format={PNG_FORMAT}")
+
             logger.debug("Properties set.")
 
             # Run the procedure
@@ -128,11 +188,12 @@ class ScronchPlugin(Gimp.PlugIn):
             logger.debug(f"Procedure result: {result}")
 
             # Extract status from the ValueArray
-            status = result.index(0)  # Retrieve the status at index 0
+            status = result.index(0)
             if status != Gimp.PDBStatusType.SUCCESS:
                 raise RuntimeError(f"Export failed with status {status}")
-            logger.info(f"Exported to {png_filename}")
-            Gimp.message(f"Exported to {png_filename}")
+            
+            logger.info(f"Exported to {output_filename}")
+            Gimp.message(f"Exported to {output_filename}")
 
             # Delete the duplicate image
             dup_img.delete()
